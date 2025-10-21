@@ -1,0 +1,65 @@
+# 语言包定义
+language_pack = {
+    'en': {
+        'install_button': 'Install pyenv-win',
+        'update_button': 'Update pyenv-win',
+        'uninstall_button': 'Uninstall pyenv-win',
+        'command_label': 'Commands:',
+        'params_label': 'Parameters:',
+        'run_button': 'Run Command',
+        'clear_button': 'Clear Output',
+        'already_installed': 'pyenv is already installed.',
+        'not_installed': 'pyenv is not installed, so it cannot be uninstalled.',
+        'starting_uninstallation': 'Starting uninstallation...',
+        'starting_installation': 'Starting installation...',
+        'command_descriptions': {
+            'commands': 'List all available pyenv commands',
+            'duplicate': 'Duplicate a Python version',
+            'local': 'Set or show the local application-specific Python version',
+            'global': 'Set or show the global Python version',
+            'shell': 'Set or show the shell-specific Python version',
+            'install': 'Install 1 or more versions of Python',
+            'uninstall': 'Uninstall 1 or more versions of Python',
+            'update': 'Update the cached version DB',
+            'rehash': 'Rehash pyenv shims (run this after switching Python versions)',
+            'vname': 'Show the current Python version',
+            'version': 'Show the current Python version and its origin',
+            'version-name': 'Show the current Python version',
+            'versions': 'List all Python versions available to pyenv',
+            'exec': 'Runs an executable by first preparing PATH so that the selected Python version\'s `bin\' directory is at the front',
+            'which': 'Display the full path to an executable',
+            'whence': 'List all Python versions that contain the given executable'
+        }
+    },
+    'zh': {
+        'install_button': '安装 pyenv-win',
+        'update_button': '更新 pyenv-win',
+        'uninstall_button': '卸载 pyenv-win',
+        'command_label': '命令：',
+        'params_label': '参数：',
+        'run_button': '运行命令',
+        'clear_button': '清除输出',
+        'already_installed': 'pyenv 已安装。',
+        'not_installed': 'pyenv 未安装，无法卸载。',
+        'starting_uninstallation': '开始卸载...',
+        'starting_installation': '开始安装...',
+        'command_descriptions': {
+            'commands': '列出所有可用的pyenv命令',
+            'duplicate': '复制一个Python版本',
+            'local': '设置或显示本地应用特定的Python版本',
+            'global': '设置或显示全局Python版本',
+            'shell': '设置或显示shell特定的Python版本',
+            'install': '安装一个或多个Python版本',
+            'uninstall': '卸载一个或多个Python版本',
+            'update': '更新缓存的版本数据库',
+            'rehash': '重新生成pyenv shims（切换Python版本后运行此命令）',
+            'vname': '显示当前Python版本',
+            'version': '显示当前Python版本及其来源',
+            'version-name': '显示当前Python版本',
+            'versions': '列出pyenv可用的所有Python版本',
+            'exec': '运行可执行文件，首先准备PATH，使所选Python版本的`bin`目录位于最前面',
+            'which': '显示可执行文件的完整路径',
+            'whence': '列出包含给定可执行文件的所有Python版本'
+        }
+    }
+}
