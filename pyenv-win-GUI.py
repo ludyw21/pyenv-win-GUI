@@ -21,6 +21,10 @@ current_language = 'en'
 
 # 配置文件路径
 config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+# 可用版本缓存文件路径
+AVAILABLE_VERSIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'available_versions.txt')
+# 已安装版本缓存文件路径
+INSTALLED_VERSIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'installed_versions.txt')
 
 # pyenv版本信息
 local_version = None
@@ -73,8 +77,10 @@ def update_ui_language():
     params_label.config(text=language_pack[current_language]['params_label'])
     run_button.config(text=language_pack[current_language]['run_button'])
     clear_button.config(text=language_pack[current_language]['clear_button'])
-    # 更新命令描述
-    update_description()
+    # 更新命令列表
+    update_commands_list()
+    # 更新版本信息显示（包括语言切换）
+    update_version_display()
 
 # 检查本地pyenv版本
 def check_local_version():
@@ -130,8 +136,8 @@ def check_global_version():
         print(f"Error checking global version: {e}")
         return "未设置"
 
-# 从GitHub获取最新版本
-def get_latest_version():
+# 从GitHub获取最新版本 - 异步版本
+def get_latest_version_async():
     global latest_version
     try:
         # 使用GitHub API获取最新tag
@@ -143,16 +149,47 @@ def get_latest_version():
                 latest_tag = tags[0]['name']
                 # 提取版本号，移除可能的v前缀
                 latest_version = latest_tag.lstrip('v')
-                return f"v{latest_version}"
-        return None
+                # 在主线程中更新UI
+                root.after(0, lambda: update_latest_version_display())
+                # 保存到配置文件
+                save_config()
     except Exception as e:
         print(f"Error getting latest version: {e}")
-        return None
+
+# 同步获取最新版本（有缓存机制）
+def get_latest_version():
+    global latest_version
+    # 如果已有缓存的版本信息，直接返回
+    if latest_version:
+        return f"v{latest_version}"
+    # 没有缓存时返回None，异步获取将在后台进行
+    # 启动异步线程获取最新版本
+    threading.Thread(target=get_latest_version_async, daemon=True).start()
+    return None
+
+# 更新最新版本显示
+def update_latest_version_display():
+    # 查找所有显示最新版本的标签并更新它们
+    for widget in version_frame.winfo_children():
+        if isinstance(widget, ttk.Frame):
+            for child in widget.winfo_children():
+                if isinstance(child, ttk.Label):
+                    # 检查标签文本是否包含最新版本的前缀
+                    text = child.cget("text")
+                    if language_pack[current_language]['latest_version'] in text and "github" not in text.lower():
+                        # 更新标签文本
+                        child.config(text=f"{language_pack[current_language]['latest_version']} v{latest_version}")
 
 # 全局版本标签变量
 version_label = None
 
 # 创建版本信息标签
+
+def open_github_link(event):
+    # 在点击时打开浏览器访问GitHub链接
+    import webbrowser
+    webbrowser.open('https://github.com/pyenv-win/pyenv-win/tags')
+
 def create_version_info_label(parent_frame):
     global version_label
     
@@ -179,41 +216,72 @@ def create_version_info_label(parent_frame):
         except:
             pass
     
-    # 创建版本信息文本
-    version_info = []
+    # 创建主版本信息标签，所有信息将显示在同一行
+    main_info_frame = ttk.Frame(parent_frame)
+    main_info_frame.pack(anchor=W)
+    
+    # 首先添加当前版本信息
     if local_version_text:
-        version_info.append(f"当前: {local_version_text}")
+        current_label = ttk.Label(main_info_frame, text=f"{language_pack[current_language]['current_version']} {local_version_text}", font=("Arial", 10), padding=(10, 2))
+        current_label.pack(side=LEFT)
     else:
-        version_info.append("未安装pyenv")
+        not_installed_label = ttk.Label(main_info_frame, text=language_pack[current_language]['not_installed_pyenv'], font=("Arial", 10), padding=(10, 2))
+        not_installed_label.pack(side=LEFT)
     
-    if latest_version_text:
-        version_info.append(f"最新: {latest_version_text}")
-    else:
-        version_info.append("请确保能访问github，大陆地区建议开启TUN")
-    
-    # 添加py全局版本信息
+    # 如果有本地版本，继续添加其他信息
     if local_version_text:
-        version_info.append(f"py全局版本: {global_version_text}")
-    
-    # 使用 | 连接所有版本信息在一行显示
-    version_text = " | ".join(version_info)
-    version_label = ttk.Label(parent_frame, text=version_text, font=("Arial", 10), padding=(10, 2))
-    version_label.pack(anchor=W)
+        # 添加分隔符
+        separator1_label = ttk.Label(main_info_frame, text=" | ", font=("Arial", 10), padding=(0, 2))
+        separator1_label.pack(side=LEFT)
+        
+        # 添加最新版本信息
+        if latest_version_text:
+            latest_label = ttk.Label(main_info_frame, text=f"{language_pack[current_language]['latest_version']} {latest_version_text}", font=("Arial", 10), padding=(0, 2))
+            latest_label.pack(side=LEFT)
+        else:
+            # 无法获取最新版本时，在"最新:"后面显示GitHub访问提示
+            latest_prefix_label = ttk.Label(main_info_frame, text=f"{language_pack[current_language]['latest_version']} ", font=("Arial", 10), padding=(0, 2))
+            latest_prefix_label.pack(side=LEFT)
+            
+            # 添加前缀文本
+            prefix_label = ttk.Label(main_info_frame, text=language_pack[current_language]['ensure_github_access'], font=("Arial", 10), padding=(0, 2))
+            prefix_label.pack(side=LEFT)
+            
+            # 添加github超链接标签
+            github_label = ttk.Label(main_info_frame, text=language_pack[current_language]['github_text'], font=("Arial", 10, "underline"), foreground="blue", padding=(0, 2))
+            github_label.pack(side=LEFT)
+            # 绑定点击事件
+            github_label.bind("<Button-1>", open_github_link)
+        
+        # 添加分隔符
+        separator2_label = ttk.Label(main_info_frame, text=" | ", font=("Arial", 10), padding=(0, 2))
+        separator2_label.pack(side=LEFT)
+        
+        # 添加全局版本信息
+        global_version_label = ttk.Label(main_info_frame, text=f"{language_pack[current_language]['py_global_version']} {global_version_text}", font=("Arial", 10), padding=(0, 2))
+        global_version_label.pack(side=LEFT)
     
     # 保存标签引用
-    line_label = version_label
-    
-    # 保存最后一个标签的引用
-    version_label = line_label
+    version_label = main_info_frame
 
 # 更新版本信息显示
 def update_version_display():
     global version_label
     
-    if version_label:
-        # 销毁现有标签和全局版本标签（找到所有在version_frame中的标签并销毁）
-        for widget in version_frame.winfo_children():
-            widget.destroy()
+    # 强制销毁version_frame中的所有控件，确保完全清除旧标签
+    for widget in version_frame.winfo_children():
+        widget.destroy()
+    
+    # 语言切换时不需要重新获取版本信息，只需要重新显示UI
+    # 但如果是首次显示或版本信息未获取，需要确保有版本数据
+    if local_version is None:
+        check_local_version()
+    if global_version is None:
+        check_global_version()
+    
+    # 异步获取最新版本（如果尚未获取）
+    if latest_version is None:
+        get_latest_version()
     
     # 重新创建版本信息标签
     create_version_info_label(version_frame)
@@ -229,8 +297,11 @@ def update_version_display():
             install_button.pack_forget()
         else:
             update_button.pack_forget()
-    except:
-        pass
+    except Exception as e:
+        print(f"Error updating buttons: {e}")
+    
+    # 强制更新GUI以确保显示最新内容
+    root.update_idletasks()
 
 # 加载配置
 load_config()
@@ -310,11 +381,11 @@ def run_ps1(uninstall=False):
             if match:
                 local_version = match.group(1)
                 save_config()
-                output_text.insert(END, f"\npyenv 已成功安装/更新到版本: v{local_version}\n")
+                output_text.insert(END, f"\n{language_pack[current_language]['successfully_installed_updated']} v{local_version}\n")
                 # 更新界面版本显示
                 root.after(0, update_version_display)
         except Exception as e:
-            output_text.insert(END, f"\n获取版本信息时出错: {e}\n")
+            output_text.insert(END, f"\n{language_pack[current_language]['error_getting_version']} {e}\n")
     else:
         # 卸载完成后清除版本信息
         local_version = None
@@ -340,9 +411,22 @@ def clear_output():
 
 def run_command():
     # Run a pyenv command using PowerShell and display the output
-    selected_command = command_var.get()
-    params = params_entry.get()
-    command = ['powershell', '-Command', f'pyenv {selected_command} {params}']
+    selected_command_text = command_var.get()
+    # 使用get_command_name函数提取命令部分
+    selected_command = get_command_name(selected_command_text)
+    params = params_var.get()  # 从params_var获取参数
+    
+    # 检查是否是install -l命令
+    is_install_list = (selected_command == 'install' and params == '-l')
+    
+    # 检查是否是global命令（无参数）来获取已安装版本
+    is_global_no_params = (selected_command == 'global' and (not params or params == language_pack[current_language]['run_global_first']))
+    
+    # 对于global命令，如果参数是提示信息，则使用空参数
+    if selected_command == 'global' and params == language_pack[current_language]['run_global_first']:
+        command = ['powershell', '-Command', f'pyenv {selected_command}']
+    else:
+        command = ['powershell', '-Command', f'pyenv {selected_command} {params}']
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
 
     # Read and display the output from the subprocess
@@ -355,8 +439,70 @@ def run_command():
     process.stdout.close()
     process.wait()
     
+    # 处理install -l命令的特殊情况
+    if is_install_list:
+        if handle_install_list(output_lines):
+            output_text.insert(END, f"\n{language_pack[current_language]['updated_available_versions']}\n")
+    # 处理global命令（无参数）的特殊情况，用于获取已安装版本
+    elif is_global_no_params:
+        # 解析输出获取已安装版本
+        installed_versions = []
+        for line in output_lines:
+            line = line.strip()
+            # 跳过空行和错误信息行
+            if line and not any(err_msg in line.lower() for err_msg in ['error', '错误', 'failed']):
+                # 尝试匹配版本号格式（简单判断，假设版本号包含数字和点）
+                if any(char.isdigit() for char in line) and '.' in line:
+                    installed_versions.append(line)
+        
+        # 如果找到了版本信息，更新文件和下拉框
+        if installed_versions:
+            if update_installed_versions_file(installed_versions):
+                output_text.insert(END, f"\n{language_pack[current_language]['updated_installed_versions']}\n")
+                # 更新下拉框
+                update_global_params_combobox()
+        else:
+            # 如果没有找到有效版本，尝试直接运行pyenv versions命令
+            output_text.insert(END, f"\n{language_pack[current_language]['trying_get_installed_versions']}\n")
+            versions_command = ['powershell', '-Command', 'pyenv versions']
+            versions_process = subprocess.Popen(versions_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            versions_output = []
+            for line in iter(versions_process.stdout.readline, b''):
+                line_text = line.decode()
+                versions_output.append(line_text)
+                output_text.insert(END, line_text)
+                output_text.see(END)
+            versions_process.stdout.close()
+            versions_process.wait()
+            
+            # 解析pyenv versions的输出
+            installed_versions = []
+            for line in versions_output:
+                line = line.strip()
+                # 跳过空行和错误信息行
+                if line and not any(err_msg in line.lower() for err_msg in ['error', '错误', 'failed']):
+                    # 移除版本号前面的*（如果存在）和空格
+                    if line.startswith('*'):
+                        line = line[1:].strip()
+                    # 假设版本号是行的第一个部分（直到空格为止）
+                    if ' ' in line:
+                        version = line.split(' ', 1)[0]
+                    else:
+                        version = line
+                    # 简单验证是否为版本号格式
+                    if any(char.isdigit() for char in version) and '.' in version:
+                        installed_versions.append(version)
+            
+            # 如果找到了版本信息，更新文件和下拉框
+            if installed_versions:
+                if update_installed_versions_file(installed_versions):
+                    output_text.insert(END, f"\n{language_pack[current_language]['updated_installed_versions']}\n")
+                    # 更新下拉框
+                    update_global_params_combobox()
+    
     # 检测是否执行了pyenv global命令并成功设置了版本
-    if selected_command == 'global' and params.strip():
+    if selected_command == 'global' and params.strip() and params != language_pack[current_language]['run_global_first']:
         # 尝试更新全局版本信息
         global global_version
         # 直接使用命令中设置的版本号
@@ -366,7 +512,7 @@ def run_command():
         update_version_display()
 
 # Create the main window with ttkbootstrap theme
-root = ttk.Window(themename="flatly")
+root = ttk.Window(themename="cosmo")
 root.title(f"pyenv-win GUI - Version {__version__}")  # Set the title of the window
 
 # Configure grid weights
@@ -417,8 +563,40 @@ language_menu.pack(side=LEFT)
 # Bind language change event
 language_menu.bind('<<ComboboxSelected>>', change_language)
 
-# List of commands for the dropdown menu
-commands = ['commands', 'duplicate', 'local', 'global', 'shell', 'install', 'uninstall', 'update', 'rehash', 'vname', 'version', 'version-name', 'versions', 'exec', 'which', 'whence']
+# 创建命令列表，从语言包获取命令描述
+def create_commands_list():
+    commands_list = []
+    # 获取当前语言的命令描述
+    descriptions = language_pack[current_language]['command_descriptions']
+    # 遍历所有命令，构建命令-描述对
+    for cmd in descriptions:
+        commands_list.append(f"{cmd} - {descriptions[cmd]}")
+    return commands_list
+
+# 初始创建命令列表
+commands = create_commands_list()
+
+# 更新命令列表（语言切换时调用）
+def update_commands_list():
+    global commands
+    commands = create_commands_list()
+    # 更新命令下拉框
+    command_menu['values'] = commands
+    # 确保当前选中项有效
+    if command_var.get():
+        # 尝试保持当前命令选择不变（仅保留命令部分）
+        current_cmd = get_command_name(command_var.get())
+        for cmd_desc in commands:
+            if get_command_name(cmd_desc) == current_cmd:
+                command_var.set(cmd_desc)
+                break
+
+# 获取命令名称（只提取命令部分，不包括描述）
+def get_command_name(command_text):
+    # 提取命令部分（第一个空格前的内容）
+    if ' - ' in command_text:
+        return command_text.split(' - ')[0].strip()
+    return command_text.strip()
 
 # Create a frame for the commands section
 commands_frame = ttk.Frame(root)
@@ -433,36 +611,215 @@ command_var = ttk.StringVar(root)
 command_var.set(commands[0])  # Set the default option
 
 # Create the dropdown menu for the commands
-command_menu = ttk.Combobox(commands_frame, textvariable=command_var, values=commands, width=15)
+command_menu = ttk.Combobox(commands_frame, textvariable=command_var, values=commands, width=50)
 command_menu.pack(side=LEFT, padx=(0, 10))
 
-# Create a description label that shows the selected command's description
-description_label = ttk.Label(commands_frame, text="", wraplength=700, justify=LEFT)
-description_label.pack(side=LEFT, fill=X, expand=True)
-
-# Function to update description when command is selected
-def update_description(event=None):
-    selected_command = command_var.get()
-    if selected_command in language_pack[current_language]['command_descriptions']:
-        description_label.config(text=language_pack[current_language]['command_descriptions'][selected_command])
-
-# Bind the update function to the combobox selection
-command_menu.bind('<<ComboboxSelected>>', update_description)
-
-# Initialize the description
-update_description()
+# 参数变量
+params_var = ttk.StringVar(root)
 
 # Create a frame for the parameters input
 params_frame = ttk.Frame(root)
 params_frame.grid(row=3, column=0, sticky='w', pady=(0, 10), padx=(10, 0))  # Place the frame in the grid, aligned with commands
+
+# 创建参数下拉框（用于install命令）
+# 使用简单可靠的方法解决Windows上的焦点问题
+params_combobox = ttk.Combobox(params_frame, textvariable=params_var, width=47, state='disabled')
+
+# 搜索过滤函数 - 专注于保持焦点的实时过滤
+def on_combobox_search(event):
+    # 忽略导航键和特殊按键，只处理实际字符输入
+    if event.keysym in ('Left', 'Right', 'Home', 'End', 'Up', 'Down', 'PageUp', 'PageDown', 
+                       'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Delete', 'BackSpace',
+                       'Return', 'Tab', 'Escape'):
+        return
+    
+    # 获取当前输入内容和光标位置
+    search_text = params_combobox.get().lower()
+    cursor_pos = params_combobox.index(INSERT)
+    
+    # 加载所有可用版本
+    all_versions = load_available_versions()
+    
+    # 构建过滤后的选项列表
+    filtered_options = ['-l']  # 始终保留'-l'选项
+    
+    if not all_versions:
+        # 如果没有版本信息，添加提示
+        if not search_text or language_pack[current_language]['run_l_first'] in search_text:
+            filtered_options.append(language_pack[current_language]['run_l_first'])
+    else:
+        # 过滤匹配的版本
+        for version in all_versions:
+            if search_text in version.lower():
+                filtered_options.append(version)
+    
+    # 更新下拉框的值，但不自动显示下拉（这是导致焦点问题的主要原因）
+    params_combobox['values'] = filtered_options
+    
+    # 强制保持输入焦点 - 这是关键！
+    # 在Windows上，Combobox组件在更新values后有时会失去焦点
+    root.after(5, lambda: params_combobox.focus_set())
+    # 恢复光标位置
+    root.after(10, lambda pos=cursor_pos: params_combobox.icursor(pos))
+
+# 处理用户主动查看下拉的情况
+def on_down_arrow(event):
+    # 只有当用户明确按向下箭头时才触发下拉显示
+    # 这样可以避免在输入过程中自动显示下拉导致的焦点问题
+    # 让Combobox正常处理向下箭头事件
+    return None
+
+# 绑定输入事件 - 专注于实时过滤和保持焦点
+# 使用 <KeyRelease> 事件来实现实时过滤，但不自动显示下拉
+params_combobox.bind('<KeyRelease>', on_combobox_search)
+
+# 绑定向下箭头事件，让用户可以主动查看过滤结果
+params_combobox.bind('<Down>', on_down_arrow)
+
+# 这种实现方式优先保证：
+# 1. 连续输入多个字符时绝对不会失去焦点
+# 2. 输入内容实时过滤匹配项
+# 3. 用户可以通过点击下拉按钮或按向下箭头主动查看过滤后的结果
+# 4. 提供稳定可靠的搜索体验，避免Windows平台上的焦点问题
 
 # Create a label for the parameters input
 params_label = ttk.Label(params_frame, text=language_pack[current_language]['params_label'])
 params_label.pack(side=LEFT, padx=(0, 5))  # Place the label in the frame
 
 # Create the parameters input box
-params_entry = ttk.Entry(params_frame, width=50)
+params_entry = ttk.Entry(params_frame, textvariable=params_var, width=50)
 params_entry.pack(side=LEFT)  # Place the input box in the frame
+
+# 加载可用版本的函数
+def load_available_versions():
+    versions = []
+    if os.path.exists(AVAILABLE_VERSIONS_FILE):
+        try:
+            with open(AVAILABLE_VERSIONS_FILE, 'r', encoding='utf-8') as f:
+                versions = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+        except Exception as e:
+            print(f"Error loading available versions: {e}")
+    return versions
+
+# 加载已安装版本的函数
+def load_installed_versions():
+    versions = []
+    if os.path.exists(INSTALLED_VERSIONS_FILE):
+        try:
+            with open(INSTALLED_VERSIONS_FILE, 'r', encoding='utf-8') as f:
+                versions = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+        except Exception as e:
+            print(f"Error loading installed versions: {e}")
+    return versions
+
+# 更新已安装版本文件
+def update_installed_versions_file(versions):
+    try:
+        with open(INSTALLED_VERSIONS_FILE, 'w', encoding='utf-8') as f:
+            f.write("# Installed Python versions cache\n")
+            for version in versions:
+                f.write(f"{version}\n")
+        return True
+    except Exception as e:
+        print(f"Error writing installed versions: {e}")
+        return False
+
+# 更新global参数下拉框
+def update_global_params_combobox():
+    # 加载已安装版本
+    versions = load_installed_versions()
+    
+    # 如果没有已安装版本，显示提示信息但不作为选项
+    if not versions:
+        # 清除选项
+        params_combobox['values'] = []
+        # 设置状态为禁用，这样用户不能下拉选择
+        params_combobox['state'] = 'disabled'
+        # 显示提示信息
+        params_var.set(language_pack[current_language]['run_global_first'])
+    else:
+        # 设置下拉框的值为已安装版本
+        params_combobox['values'] = versions
+        # 设置状态为只读，用户可以选择但不能编辑
+        params_combobox['state'] = 'readonly'
+        # 不设置默认值，让用户选择
+        params_var.set('')
+
+# 更新install参数下拉框
+def update_install_params_combobox():
+    # 清除现有的值
+    params_combobox['values'] = []
+    
+    # 首先添加'-l'选项
+    options = ['-l']
+    
+    # 加载可用版本
+    versions = load_available_versions()
+    
+    # 如果没有可用版本，添加提示信息
+    if not versions:
+        options.append(language_pack[current_language]['run_l_first'])
+    else:
+        # 添加所有版本
+        options.extend(versions)
+    
+    # 设置下拉框的值
+    params_combobox['values'] = options
+    
+    # 清除参数值，使其默认为空
+    params_var.set('')
+
+# 切换参数组件（输入框或下拉框）
+def toggle_params_widget(event=None):
+    selected_command_text = command_var.get()
+    # 使用get_command_name函数提取命令部分
+    selected_command = get_command_name(selected_command_text)
+    
+    if selected_command == 'install':
+        # 隐藏输入框，显示下拉框
+        params_entry.pack_forget()
+        params_combobox.pack(side=LEFT)
+        params_combobox['state'] = 'normal'  # 设置为可编辑以支持搜索
+        # 更新下拉框内容
+        update_install_params_combobox()
+    elif selected_command == 'global':
+        # 隐藏输入框，显示下拉框
+        params_entry.pack_forget()
+        params_combobox.pack(side=LEFT)
+        # 状态将在update_global_params_combobox中根据是否有已安装版本设置
+        # 更新下拉框内容
+        update_global_params_combobox()
+    else:
+        # 隐藏下拉框，显示输入框
+        params_combobox.pack_forget()
+        params_entry.pack(side=LEFT)
+        params_entry['state'] = 'normal'
+
+# 绑定命令选择变更事件
+command_menu.bind('<<ComboboxSelected>>', toggle_params_widget)
+
+# 处理install -l命令的结果
+def handle_install_list(output_lines):
+    versions = []
+    # 过滤掉以::开头的信息行，只保留版本信息
+    for line in output_lines:
+        line = line.strip()
+        # 跳过空行和以::开头的行
+        if line and not line.startswith('::'):
+            versions.append(line)
+    
+    # 将版本信息写入文件
+    try:
+        with open(AVAILABLE_VERSIONS_FILE, 'w', encoding='utf-8') as f:
+            f.write("# Available Python versions cache\n")
+            for version in versions:
+                f.write(f"{version}\n")
+        # 更新下拉框
+        update_install_params_combobox()
+        return True
+    except Exception as e:
+        print(f"Error writing available versions: {e}")
+        return False
 
 # Create the Run Command button with ttkbootstrap style
 run_button = ttk.Button(root, text=language_pack[current_language]['run_button'], command=run_command, bootstyle=PRIMARY)
