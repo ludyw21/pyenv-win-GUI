@@ -25,10 +25,11 @@ config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.j
 # pyenv版本信息
 local_version = None
 latest_version = None
+global_version = None
 
 # 读取配置文件
 def load_config():
-    global current_language, local_version
+    global current_language, local_version, global_version
     try:
         if os.path.exists(config_file):
             with open(config_file, 'r', encoding='utf-8') as f:
@@ -37,6 +38,8 @@ def load_config():
                     current_language = config['language']
                 if 'local_version' in config:
                     local_version = config['local_version']
+                if 'global_version' in config:
+                    global_version = config['global_version']
     except Exception as e:
         print(f"Error loading config: {e}")
 
@@ -46,6 +49,8 @@ def save_config():
         config = {'language': current_language}
         if local_version:
             config['local_version'] = local_version
+        if global_version:
+            config['global_version'] = global_version
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=4)
     except Exception as e:
@@ -98,6 +103,33 @@ def check_local_version():
         print(f"Error checking local version: {e}")
         return None
 
+# 检查全局Python版本
+def check_global_version():
+    global global_version
+    # 首先检查是否已从配置文件加载了版本信息
+    if global_version:
+        return f"v{global_version}"
+    
+    # 如果配置文件中没有版本信息，则执行命令获取
+    try:
+        version_output = subprocess.check_output(['powershell', '-Command', 'pyenv global'], stderr=subprocess.STDOUT).decode().strip()
+        # 如果输出不为空且不是错误信息
+        if version_output and not version_output.startswith(('Error', '错误')):
+            # 移除可能的前导/尾随空格和换行符
+            global_version = version_output.strip()
+            # 获取到版本后保存到配置文件
+            save_config()
+            return f"v{global_version}"
+        return "未设置"
+    except subprocess.CalledProcessError:
+        # 如果执行失败，清除全局版本信息
+        global_version = None
+        save_config()
+        return "未设置"
+    except Exception as e:
+        print(f"Error checking global version: {e}")
+        return "未设置"
+
 # 从GitHub获取最新版本
 def get_latest_version():
     global latest_version
@@ -130,6 +162,9 @@ def create_version_info_label(parent_frame):
     # 获取最新版本
     latest_version_text = get_latest_version()
     
+    # 检查全局Python版本
+    global_version_text = check_global_version()
+    
     # 检查是否需要隐藏按钮
     if local_version_text:
         # 如果已安装，隐藏安装按钮
@@ -156,17 +191,29 @@ def create_version_info_label(parent_frame):
     else:
         version_info.append("请确保能访问github，大陆地区建议开启TUN")
     
-    # 创建并显示版本标签
-    version_label = ttk.Label(parent_frame, text=" | ".join(version_info), font=("Arial", 10), padding=(10, 5))
+    # 添加py全局版本信息
+    if local_version_text:
+        version_info.append(f"py全局版本: {global_version_text}")
+    
+    # 使用 | 连接所有版本信息在一行显示
+    version_text = " | ".join(version_info)
+    version_label = ttk.Label(parent_frame, text=version_text, font=("Arial", 10), padding=(10, 2))
     version_label.pack(anchor=W)
+    
+    # 保存标签引用
+    line_label = version_label
+    
+    # 保存最后一个标签的引用
+    version_label = line_label
 
 # 更新版本信息显示
 def update_version_display():
     global version_label
     
     if version_label:
-        # 销毁现有标签
-        version_label.destroy()
+        # 销毁现有标签和全局版本标签（找到所有在version_frame中的标签并销毁）
+        for widget in version_frame.winfo_children():
+            widget.destroy()
     
     # 重新创建版本信息标签
     create_version_info_label(version_frame)
@@ -293,15 +340,30 @@ def clear_output():
 
 def run_command():
     # Run a pyenv command using PowerShell and display the output
-    command = ['powershell', '-Command', f'pyenv {command_var.get()} {params_entry.get()}']
+    selected_command = command_var.get()
+    params = params_entry.get()
+    command = ['powershell', '-Command', f'pyenv {selected_command} {params}']
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
 
     # Read and display the output from the subprocess
+    output_lines = []
     for line in iter(process.stdout.readline, b''):
-        output_text.insert(END, line.decode())
+        line_text = line.decode()
+        output_text.insert(END, line_text)
         output_text.see(END)
+        output_lines.append(line_text)
     process.stdout.close()
     process.wait()
+    
+    # 检测是否执行了pyenv global命令并成功设置了版本
+    if selected_command == 'global' and params.strip():
+        # 尝试更新全局版本信息
+        global global_version
+        # 直接使用命令中设置的版本号
+        global_version = params.strip()
+        save_config()
+        # 更新界面显示
+        update_version_display()
 
 # Create the main window with ttkbootstrap theme
 root = ttk.Window(themename="flatly")
