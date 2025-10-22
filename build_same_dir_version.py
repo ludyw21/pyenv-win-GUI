@@ -1,13 +1,15 @@
 import os
 import subprocess
+import sys
 
 print("Starting to build pyenv-win-GUI (same directory configuration)...")
 
 # 确保依赖已安装
 print("Installing dependencies...")
-subprocess.run(["pip", "install", "ttkbootstrap", "requests", "pyinstaller", "-q"])
+# 使用当前Python解释器的pip模块，避免找不到pip命令的问题
+subprocess.run([sys.executable, "-m", "pip", "install", "ttkbootstrap", "requests", "pyinstaller", "-q"])
 
-# 使用修复后的文件进行打包，直接指定输出文件名
+# 使用主程序文件进行打包，直接指定输出文件名
 print("Building executable...")
 result = subprocess.run([
     "pyinstaller", 
@@ -16,7 +18,7 @@ result = subprocess.run([
     "--add-data", "language_pack.py;." ,
     "--add-data", "assets;assets", 
     "--name", "pyenv-win-GUI",  # 直接指定输出文件名
-    "pyenv-win-GUI_fixed_same_dir.py"
+    "pyenv-win-GUI.py"
 ], capture_output=True, text=True)
 
 print(result.stdout)

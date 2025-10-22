@@ -3,15 +3,15 @@
 # Version of the script
 __version__ = '1.0.1'
 
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
-import subprocess
 import os
+import re
+import subprocess
 import threading
 import json
-import requests
-import re
 import sys
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+import requests
 
 # 从独立文件导入语言包
 from language_pack import language_pack
@@ -19,12 +19,19 @@ from language_pack import language_pack
 # 当前语言设置
 current_language = 'en'
 
-# 配置文件路径
-config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-# 可用版本缓存文件路径
-AVAILABLE_VERSIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'available_versions.txt')
-# 已安装版本缓存文件路径
-INSTALLED_VERSIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'installed_versions.txt')
+# 配置文件路径 - 使用与可执行文件相同的目录存储文件
+# 处理PyInstaller打包后的情况
+if getattr(sys, 'frozen', False):
+    # 已打包为exe文件
+    app_dir = os.path.dirname(sys.executable)
+else:
+    # 直接运行Python脚本
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 文件路径定义
+config_file = os.path.join(app_dir, 'config.json')
+AVAILABLE_VERSIONS_FILE = os.path.join(app_dir, 'available_versions.txt')
+INSTALLED_VERSIONS_FILE = os.path.join(app_dir, 'installed_versions.txt')
 
 # pyenv版本信息
 local_version = None
@@ -91,7 +98,7 @@ def check_local_version():
     
     # 如果配置文件中没有版本信息，则执行命令获取
     try:
-        version_output = subprocess.check_output(['powershell', '-Command', 'pyenv --version'], stderr=subprocess.STDOUT).decode().strip()
+        version_output = subprocess.check_output(['powershell', '-Command', 'pyenv --version'], stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW).decode().strip()
         # 匹配类似 "pyenv 3.1.1" 的输出
         match = re.search(r'pyenv\s+([0-9.]+)', version_output)
         if match:
@@ -118,7 +125,7 @@ def check_global_version():
     
     # 如果配置文件中没有版本信息，则执行命令获取
     try:
-        version_output = subprocess.check_output(['powershell', '-Command', 'pyenv global'], stderr=subprocess.STDOUT).decode().strip()
+        version_output = subprocess.check_output(['powershell', '-Command', 'pyenv global'], stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW).decode().strip()
         # 如果输出不为空且不是错误信息
         if version_output and not version_output.startswith(('Error', '错误')):
             # 移除可能的前导/尾随空格和换行符
@@ -355,8 +362,8 @@ def run_ps1(uninstall=False):
 
     output_text.see(END)
 
-    # Run the command in a subprocess and capture the output
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # Run the command in a subprocess and capture the output# 执行命令
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
 
     # Read and display the output from the subprocess
     while True:
@@ -410,106 +417,127 @@ def clear_output():
     output_text.delete('1.0', END)
 
 def run_command():
-    # Run a pyenv command using PowerShell and display the output
+    # 禁用运行按钮，防止重复点击
+    run_button.config(state=DISABLED)
+    
+    # 获取命令和参数
     selected_command_text = command_var.get()
-    # 使用get_command_name函数提取命令部分
     selected_command = get_command_name(selected_command_text)
-    params = params_var.get()  # 从params_var获取参数
+    params = params_var.get()
     
     # 检查是否是install -l命令
     is_install_list = (selected_command == 'install' and params == '-l')
     
-    # 检查是否是global命令（无参数）来获取已安装版本
-    is_global_no_params = (selected_command == 'global' and (not params or params == language_pack[current_language]['run_global_first']))
+    # 检查是否是global命令（无参数）
+    is_global_no_params = (selected_command == 'global' and (not params or params == language_pack[current_language]['run_versions_first']))
     
-    # 对于global命令，如果参数是提示信息，则使用空参数
-    if selected_command == 'global' and params == language_pack[current_language]['run_global_first']:
+    # 启动新线程执行命令
+    threading.Thread(target=run_command_thread, 
+                    args=(selected_command, params, is_install_list, is_global_no_params),
+                    daemon=True).start()
+
+def run_command_thread(selected_command, params, is_install_list, is_global_no_params):
+    """在单独线程中执行命令并处理输出"""
+    # 对于global和uninstall命令，如果参数是提示信息，则不传递参数
+    is_hint_text = params == language_pack[current_language]['run_versions_first']
+    if (selected_command in ['global', 'uninstall']) and is_hint_text:
         command = ['powershell', '-Command', f'pyenv {selected_command}']
+        # 显示不包含提示信息的命令
+        display_params = ''
     else:
         command = ['powershell', '-Command', f'pyenv {selected_command} {params}']
+        display_params = params
+    
+    # 在UI线程中显示命令开始执行的提示
+    def display_command_start():
+        output_text.insert(END, f"{language_pack[current_language]['executing_command']}: pyenv {selected_command}{' ' + display_params if display_params else ''}\n")
+        output_text.see(END)
+    root.after(0, display_command_start)
+    
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
 
     # Read and display the output from the subprocess
     output_lines = []
     for line in iter(process.stdout.readline, b''):
-        line_text = line.decode()
-        output_text.insert(END, line_text)
-        output_text.see(END)
+        try:
+            # 尝试使用utf-8解码
+            line_text = line.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                # 如果失败，尝试使用gbk解码（Windows系统常用）
+                line_text = line.decode('gbk')
+            except UnicodeDecodeError:
+                # 如果都失败，使用replace模式解码以避免程序崩溃
+                line_text = line.decode('utf-8', errors='replace')
         output_lines.append(line_text)
+        # 在UI线程中更新输出文本
+        def update_output(text=line_text):  # 使用默认参数捕获当前line_text
+            output_text.insert(END, text)
+            output_text.see(END)
+            # 强制更新UI以确保实时显示
+            root.update_idletasks()
+        root.after(0, update_output)
+    
     process.stdout.close()
     process.wait()
     
     # 处理install -l命令的特殊情况
     if is_install_list:
         if handle_install_list(output_lines):
-            output_text.insert(END, f"\n{language_pack[current_language]['updated_available_versions']}\n")
-    # 处理global命令（无参数）的特殊情况，用于获取已安装版本
-    elif is_global_no_params:
-        # 解析输出获取已安装版本
+            def update_success_message():
+                output_text.insert(END, f"\n{language_pack[current_language]['updated_available_versions']}\n")
+                output_text.see(END)
+            root.after(0, update_success_message)
+    # 处理versions命令的特殊情况，用于获取已安装版本
+    elif selected_command == 'versions':
+        # 解析pyenv versions的输出
         installed_versions = []
         for line in output_lines:
             line = line.strip()
             # 跳过空行和错误信息行
             if line and not any(err_msg in line.lower() for err_msg in ['error', '错误', 'failed']):
-                # 尝试匹配版本号格式（简单判断，假设版本号包含数字和点）
-                if any(char.isdigit() for char in line) and '.' in line:
-                    installed_versions.append(line)
+                # 移除版本号前面的*（如果存在）和空格
+                if line.startswith('*'):
+                    line = line[1:].strip()
+                # 假设版本号是行的第一个部分（直到空格为止）
+                if ' ' in line:
+                    version = line.split(' ', 1)[0]
+                else:
+                    version = line
+                # 简单验证是否为版本号格式
+                if any(char.isdigit() for char in version) and '.' in version:
+                    installed_versions.append(version)
         
         # 如果找到了版本信息，更新文件和下拉框
         if installed_versions:
             if update_installed_versions_file(installed_versions):
-                output_text.insert(END, f"\n{language_pack[current_language]['updated_installed_versions']}\n")
-                # 更新下拉框
-                update_global_params_combobox()
-        else:
-            # 如果没有找到有效版本，尝试直接运行pyenv versions命令
-            output_text.insert(END, f"\n{language_pack[current_language]['trying_get_installed_versions']}\n")
-            versions_command = ['powershell', '-Command', 'pyenv versions']
-            versions_process = subprocess.Popen(versions_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
-            
-            versions_output = []
-            for line in iter(versions_process.stdout.readline, b''):
-                line_text = line.decode()
-                versions_output.append(line_text)
-                output_text.insert(END, line_text)
-                output_text.see(END)
-            versions_process.stdout.close()
-            versions_process.wait()
-            
-            # 解析pyenv versions的输出
-            installed_versions = []
-            for line in versions_output:
-                line = line.strip()
-                # 跳过空行和错误信息行
-                if line and not any(err_msg in line.lower() for err_msg in ['error', '错误', 'failed']):
-                    # 移除版本号前面的*（如果存在）和空格
-                    if line.startswith('*'):
-                        line = line[1:].strip()
-                    # 假设版本号是行的第一个部分（直到空格为止）
-                    if ' ' in line:
-                        version = line.split(' ', 1)[0]
-                    else:
-                        version = line
-                    # 简单验证是否为版本号格式
-                    if any(char.isdigit() for char in version) and '.' in version:
-                        installed_versions.append(version)
-            
-            # 如果找到了版本信息，更新文件和下拉框
-            if installed_versions:
-                if update_installed_versions_file(installed_versions):
+                def update_versions_message():
                     output_text.insert(END, f"\n{language_pack[current_language]['updated_installed_versions']}\n")
+                    output_text.see(END)
                     # 更新下拉框
                     update_global_params_combobox()
+                root.after(0, update_versions_message)
+    # 处理global和uninstall命令（无参数）的特殊情况 - 注意：命令本身已经在run_command_thread中正确执行
+    # 这里不再重复显示提示信息，避免重复输出
+    # 仅保留对非命令执行情况的处理逻辑（如果需要）
     
     # 检测是否执行了pyenv global命令并成功设置了版本
-    if selected_command == 'global' and params.strip() and params != language_pack[current_language]['run_global_first']:
+    if selected_command == 'global' and params.strip() and params != language_pack[current_language]['run_versions_first']:
         # 尝试更新全局版本信息
         global global_version
         # 直接使用命令中设置的版本号
         global_version = params.strip()
         save_config()
-        # 更新界面显示
-        update_version_display()
+        # 在UI线程中更新界面显示
+        root.after(0, update_version_display)
+
+    # 在命令完成后启用按钮
+    def enable_run_button():
+        run_button.config(state=NORMAL)
+    root.after(0, enable_run_button)
+    
+    # 恢复运行按钮状态
+    root.after(0, lambda: run_button.config(state=NORMAL))
 
 # Create the main window with ttkbootstrap theme
 root = ttk.Window(themename="cosmo")
@@ -736,7 +764,7 @@ def update_global_params_combobox():
         # 设置状态为禁用，这样用户不能下拉选择
         params_combobox['state'] = 'disabled'
         # 显示提示信息
-        params_var.set(language_pack[current_language]['run_global_first'])
+        params_var.set(language_pack[current_language]['run_versions_first'])
     else:
         # 设置下拉框的值为已安装版本
         params_combobox['values'] = versions
@@ -775,6 +803,9 @@ def toggle_params_widget(event=None):
     # 使用get_command_name函数提取命令部分
     selected_command = get_command_name(selected_command_text)
     
+    # 清除之前的内容
+    params_var.set('')
+    
     if selected_command == 'install':
         # 隐藏输入框，显示下拉框
         params_entry.pack_forget()
@@ -782,7 +813,7 @@ def toggle_params_widget(event=None):
         params_combobox['state'] = 'normal'  # 设置为可编辑以支持搜索
         # 更新下拉框内容
         update_install_params_combobox()
-    elif selected_command == 'global':
+    elif selected_command == 'global' or selected_command == 'uninstall':
         # 隐藏输入框，显示下拉框
         params_entry.pack_forget()
         params_combobox.pack(side=LEFT)
